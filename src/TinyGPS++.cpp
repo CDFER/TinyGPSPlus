@@ -21,621 +21,543 @@ License along with this library; if not, write to the Free Software
 Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "TinyGPS++.h"
 
-#include <string.h>
-#include <ctype.h>
-#include <stdlib.h>
-#include <stdio.h>
-
-#define _GPGSVterm   "GPGSV"
-#define _GPRMCterm   "GPRMC"
-#define _GPGGAterm   "GPGGA"
-#define _GNRMCterm   "GNRMC"
-#define _GNGGAterm   "GNGGA"
-#define _GARMCterm   "GARMC"
-#define _GAGGAterm   "GAGGA"
-#define _GLRMCterm   "GLRMC"
-#define _GLGGAterm   "GLGGA"
+#define _GPGSVterm "GPGSV"
+#define _GPRMCterm "GPRMC"
+#define _GPGGAterm "GPGGA"
+#define _GNRMCterm "GNRMC"
+#define _GNGGAterm "GNGGA"
+#define _GARMCterm "GARMC"
+#define _GAGGAterm "GAGGA"
+#define _GLRMCterm "GLRMC"
+#define _GLGGAterm "GLGGA"
 
 TinyGPSPlus::TinyGPSPlus()
-  :  parity(0)
-  ,  flags(FLAG_DEFAULT)
-  ,  curSentenceType(GPS_SENTENCE_OTHER)
-  ,  curTermNumber(0)
-  ,  curTermOffset(0)
-  ,  fixQ(0)
+	: parity(0), flags(FLAG_DEFAULT), curSentenceType(GPS_SENTENCE_OTHER), curTermNumber(0), curTermOffset(0), fixQ(0)
 #ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
-  ,  customElts(0)
-  ,  customCandidates(0)
+	  ,
+	  customElts(0), customCandidates(0)
 #endif
 #ifndef TINYGPSPLUS_OPTION_NO_STATISTICS
-  ,  encodedCharCount(0)
-  ,  sentencesWithFixCount(0)
-  ,  failedChecksumCount(0)
-  ,  passedChecksumCount(0)
+	  ,
+	  encodedCharCount(0), sentencesWithFixCount(0), failedChecksumCount(0), passedChecksumCount(0)
 #endif
 {
-  term[0] = '\0';
+	term[0] = '\0';
 }
 
 //
 // public methods
 //
 
-bool TinyGPSPlus::encode(char c)
-{
-  ++encodedCharCount;
+bool TinyGPSPlus::encode(char c) {
+	++encodedCharCount;
 
-  switch(c)
-  {
-  case ',': // term terminators
-    parity ^= (uint8_t)c;
-    [[fallthrough]];
-  case '\r':
-  case '\n':
-  case '*':
-    {
-      bool isValidSentence = false;
-      if (curTermOffset < sizeof(term))
-      {
-        term[curTermOffset] = 0;
-        isValidSentence = endOfTermHandler();
-      }
-      ++curTermNumber;
-      curTermOffset = 0;
-      if(c == '*')
-      {
-        flags |= FLAG_IS_CHECKSUM_TERM;
-      }
-      else
-      {
-        flags &= (~FLAG_IS_CHECKSUM_TERM);
-      }
-      return isValidSentence;
-    }
-    break;
+	switch (c) {
+	case ',': // term terminators
+		parity ^= (uint8_t)c;
+		[[fallthrough]];
+	case '\r':
+	case '\n':
+	case '*': {
+		bool isValidSentence = false;
+		if (curTermOffset < sizeof(term)) {
+			term[curTermOffset] = 0;
+			isValidSentence = endOfTermHandler();
+		}
+		++curTermNumber;
+		curTermOffset = 0;
+		if (c == '*') {
+			flags |= FLAG_IS_CHECKSUM_TERM;
+		} else {
+			flags &= (~FLAG_IS_CHECKSUM_TERM);
+		}
+		return isValidSentence;
+	} break;
 
-  case '$': // sentence begin
-    sentenceTime = millis();
-    curTermNumber = curTermOffset = 0;
-    parity = 0;
-    curSentenceType = GPS_SENTENCE_OTHER;
-    flags &= (~FLAG_IS_CHECKSUM_TERM);
-    setSentenceHasFix(false);
-    return false;
+	case '$': // sentence begin
+		sentenceTime = millis();
+		curTermNumber = curTermOffset = 0;
+		parity = 0;
+		curSentenceType = GPS_SENTENCE_OTHER;
+		flags &= (~FLAG_IS_CHECKSUM_TERM);
+		setSentenceHasFix(false);
+		return false;
 
-  default: // ordinary characters
-    if (curTermOffset < sizeof(term) - 1)
-      term[curTermOffset++] = c;
-    if ((flags & FLAG_IS_CHECKSUM_TERM)==0)
-      parity ^= c;
-    return false;
-  }
+	default: // ordinary characters
+		if (curTermOffset < sizeof(term) - 1) term[curTermOffset++] = c;
+		if ((flags & FLAG_IS_CHECKSUM_TERM) == 0) parity ^= c;
+		return false;
+	}
 
-  return false;
+	return false;
 }
 
-int TinyGPSPlus::GGA(char *buf)
-{
-   *buf = 0;
-   char* end = buf;
-   if(fixQ == 0)
-   {
-      end = stpcpy(buf, "$GPGGA,,,,,,,,,,,,,,");
-   }
-   else
-   {
-      end += sprintf(
-                end,
-                //      HH  MM  SS   CS   LAT        NS LON       EW Q  SATS HDOP ALT    GEOID
-                "$GPGGA,%02d%02d%02d.%02d,%02d%10.7f,%c,%03d%10.7f,%c,%d,%02d,%.1f,%.3f,M,%.3f,M,,",
-                time.hour(),
-                time.minute(),
-                time.second(),
-                time.centisecond(),
-                location.rawLat().deg,
-                (location.lat() - location.rawLat().deg) * 60,
-                (location.rawLng().negative ? 'S' : 'N'),
-                location.rawLng().deg,
-                (location.lng() - location.rawLng().deg) * 60,
-                (location.rawLat().negative ? 'W' : 'E'),
-                fixQuality(),
-                satellites.value(),
-                hdop.hdop(),
-                altitude.meters(),
-                geoidHeight.meters());
-   }
+int TinyGPSPlus::GGA(char *buf) {
+	*buf = 0;
+	char *end = buf;
+	if (fixQ == 0) {
+		end = stpcpy(buf, "$GPGGA,,,,,,,,,,,,,,");
+	} else {
+		end += sprintf(end,
+					   //      HH  MM  SS   CS   LAT        NS LON       EW Q  SATS HDOP ALT    GEOID
+					   "$GPGGA,%02d%02d%02d.%02d,%02d%10.7f,%c,%03d%10.7f,%c,%d,%02d,%.1f,%.3f,M,%.3f,M,,", time.hour(),
+					   time.minute(), time.second(), time.centisecond(), location.rawLat().deg,
+					   (location.lat() - location.rawLat().deg) * 60, (location.rawLng().negative ? 'S' : 'N'),
+					   location.rawLng().deg, (location.lng() - location.rawLng().deg) * 60,
+					   (location.rawLat().negative ? 'W' : 'E'), fixQuality(), satellites.value(), hdop.hdop(),
+					   altitude.meters(), geoidHeight.meters());
+	}
 
-   // Calculate checksum
-   char checksum = 0;
-   for(char* ptr = buf+1; *ptr; ptr++)
-      checksum ^= *ptr;
+	// Calculate checksum
+	char checksum = 0;
+	for (char *ptr = buf + 1; *ptr; ptr++)
+		checksum ^= *ptr;
 
-   end += sprintf(end, "*%02X\x0D\x0A", checksum);
-   return end - buf;
+	end += sprintf(end, "*%02X\x0D\x0A", checksum);
+	return end - buf;
 }
 
 //
 // internal utilities
 //
-int TinyGPSPlus::fromHex(char a)
-{
-  if (a >= 'A' && a <= 'F')
-    return a - 'A' + 10;
-  else if (a >= 'a' && a <= 'f')
-    return a - 'a' + 10;
-  else
-    return a - '0';
+int TinyGPSPlus::fromHex(char a) {
+	if (a >= 'A' && a <= 'F')
+		return a - 'A' + 10;
+	else if (a >= 'a' && a <= 'f')
+		return a - 'a' + 10;
+	else
+		return a - '0';
 }
 
 // static
 // Parse a (potentially negative) number with up to 2 decimal digits -xxxx.yy
-int32_t TinyGPSPlus::parseDecimal(const char *term)
-{
-  bool negative = *term == '-';
-  if (negative) ++term;
-  int32_t ret = 100 * (int32_t)atol(term);
-  while (isdigit(*term)) ++term;
-  if (*term == '.' && isdigit(term[1]))
-  {
-    ret += 10 * (term[1] - '0');
-    if (isdigit(term[2]))
-      ret += term[2] - '0';
-  }
-  return negative ? -ret : ret;
+int32_t TinyGPSPlus::parseDecimal(const char *term) {
+	bool negative = *term == '-';
+	if (negative) ++term;
+	int32_t ret = 100 * (int32_t)atol(term);
+	while (isdigit(*term))
+		++term;
+	if (*term == '.' && isdigit(term[1])) {
+		ret += 10 * (term[1] - '0');
+		if (isdigit(term[2])) ret += term[2] - '0';
+	}
+	return negative ? -ret : ret;
 }
 
 // static
 // Parse degrees in that funny NMEA format DDMM.MMMM
-void TinyGPSPlus::parseDegrees(const char *term, RawDegrees &deg)
-{
+void TinyGPSPlus::parseDegrees(const char *term, RawDegrees &deg) {
+	deg.deg = 181; // Set to invalid value
+	if (!isdigit(*term) && *term != '.') {
+		// An invalid character
+		// TODO: Must check if the degree is allowed to start with a decimal point.
+		return;
+	}
 
-  deg.deg = 181; // Set to invalid value
-  if (!isdigit(*term) && *term != '.') {
-    // An invalid character
-    // TODO: Must check if the degree is allowed to start with a decimal point.
-    return;
-  }
+	const uint32_t leftOfDecimal = (uint32_t)atol(term);
 
-  const uint32_t leftOfDecimal = (uint32_t)atol(term);
+	while (isdigit(*term)) {
+		++term;
+	}
 
-  while (isdigit(*term)) {
-    ++term;
-  }
+	if (*term != '.') {
+		// Degree must have a decimal point
+		return;
+	}
 
-  if (*term != '.') {
-    // Degree must have a decimal point
-    return;
-  }
+	deg.deg = (int16_t)(leftOfDecimal / 100);
+	uint16_t minutes = (uint16_t)(leftOfDecimal % 100);
+	uint32_t multiplier = 10000000UL;
+	uint32_t tenMillionthsOfMinutes = minutes * multiplier;
 
-  deg.deg = (int16_t)(leftOfDecimal / 100);
-  uint16_t minutes = (uint16_t)(leftOfDecimal % 100);
-  uint32_t multiplier = 10000000UL;
-  uint32_t tenMillionthsOfMinutes = minutes * multiplier;
- 
-  while (isdigit(*++term))
-  {
-    multiplier /= 10;
-    tenMillionthsOfMinutes += (*term - '0') * multiplier;
-  }
+	while (isdigit(*++term)) {
+		multiplier /= 10;
+		tenMillionthsOfMinutes += (*term - '0') * multiplier;
+	}
 
-  deg.billionths = (5 * tenMillionthsOfMinutes + 1) / 3;
-  deg.negative = false;
+	deg.billionths = (5 * tenMillionthsOfMinutes + 1) / 3;
+	deg.negative = false;
 }
 
 #define COMBINE(sentence_type, term_number) (((unsigned)(sentence_type) << 5) | term_number)
 
 // Processes a just-completed term
 // Returns true if new sentence has just passed checksum test and is validated
-bool TinyGPSPlus::endOfTermHandler()
-{
-  // If it's the checksum term, and the checksum checks out, commit
-  if ((flags & FLAG_IS_CHECKSUM_TERM) != 0)
-  {
-    byte checksum = 16 * fromHex(term[0]) + fromHex(term[1]);
-    if (checksum == parity)
-    {
-      passedChecksumCount++;
-      if (sentenceHasFix())
-        ++sentencesWithFixCount;
+bool TinyGPSPlus::endOfTermHandler() {
+	// If it's the checksum term, and the checksum checks out, commit
+	if ((flags & FLAG_IS_CHECKSUM_TERM) != 0) {
+		byte checksum = 16 * fromHex(term[0]) + fromHex(term[1]);
+		if (checksum == parity) {
+			passedChecksumCount++;
+			if (sentenceHasFix()) ++sentencesWithFixCount;
 
-      switch(curSentenceType)
-      {
-      case GPS_SENTENCE_GPRMC:
-        date.commit(sentenceTime);
-        time.commit(sentenceTime);
-        if (sentenceHasFix())
-        {
-           location.commit(sentenceTime);
-           speed.commit(sentenceTime);
-           course.commit(sentenceTime);
-        }
-        break;
-      case GPS_SENTENCE_GPGGA:
-        time.commit(sentenceTime);
-        if (sentenceHasFix())
-        {
-          location.commit(sentenceTime);
-          altitude.commit(sentenceTime);
-          geoidHeight.commit(sentenceTime);
-        }
-        satellites.commit(sentenceTime);
-        hdop.commit(sentenceTime);
-        break;
-      }
+			switch (curSentenceType) {
+			case GPS_SENTENCE_GPRMC:
+				date.commit(sentenceTime);
+				time.commit(sentenceTime);
+				if (sentenceHasFix()) {
+					location.commit(sentenceTime);
+					speed.commit(sentenceTime);
+					course.commit(sentenceTime);
+				}
+				break;
+			case GPS_SENTENCE_GPGGA:
+				time.commit(sentenceTime);
+				if (sentenceHasFix()) {
+					location.commit(sentenceTime);
+					altitude.commit(sentenceTime);
+					geoidHeight.commit(sentenceTime);
+				}
+				satellites.commit(sentenceTime);
+				hdop.commit(sentenceTime);
+				break;
+			}
 
 #ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
-      // Commit all custom listeners of this sentence type
-      for (TinyGPSCustom *p = customCandidates; p != NULL && strcmp(p->sentenceName, customCandidates->sentenceName) == 0; p = p->next)
-         p->commit(sentenceTime);
+			// Commit all custom listeners of this sentence type
+			for (TinyGPSCustom *p = customCandidates; p != NULL && strcmp(p->sentenceName, customCandidates->sentenceName) == 0;
+				 p = p->next)
+				p->commit(sentenceTime);
 #endif
-      return true;
-    }
+			return true;
+		}
 
-    else
-    {
-      if (curSentenceType == GPS_SENTENCE_GPRMC) {
-          // Bad checksum in GPRMC sentence, reset optional variables
-          //   to prevent meshtastic-device issue #863
-          course.newval = speed.newval = 0;
-      }
-      ++failedChecksumCount;
-    }
+		else {
+			if (curSentenceType == GPS_SENTENCE_GPRMC) {
+				// Bad checksum in GPRMC sentence, reset optional variables
+				//   to prevent meshtastic-device issue #863
+				course.newval = speed.newval = 0;
+			}
+			++failedChecksumCount;
+		}
 
-    return false;
-  }
+		return false;
+	}
 
-  // the first term determines the sentence type
-  if (curTermNumber == 0)
-  {
-    if (!strcmp(term, _GPRMCterm) || !strcmp(term, _GNRMCterm) || !strcmp(term, _GARMCterm) || !strcmp(term, _GLRMCterm))
-      curSentenceType = GPS_SENTENCE_GPRMC;
-    else if (!strcmp(term, _GPGGAterm) || !strcmp(term, _GNGGAterm) || !strcmp(term, _GAGGAterm) || !strcmp(term, _GLRMCterm))
-      curSentenceType = GPS_SENTENCE_GPGGA;
-    else if (!strcmp(term, _GPGSVterm))
-      curSentenceType = GPS_SENTENCE_GPGSV;
-    else
-      curSentenceType = GPS_SENTENCE_OTHER;
+	// the first term determines the sentence type
+	if (curTermNumber == 0) {
+		if (!strcmp(term, _GPRMCterm) || !strcmp(term, _GNRMCterm) || !strcmp(term, _GARMCterm) || !strcmp(term, _GLRMCterm))
+			curSentenceType = GPS_SENTENCE_GPRMC;
+		else if (!strcmp(term, _GPGGAterm) || !strcmp(term, _GNGGAterm) || !strcmp(term, _GAGGAterm) ||
+				 !strcmp(term, _GLRMCterm))
+			curSentenceType = GPS_SENTENCE_GPGGA;
+		else if (!strcmp(term, _GPGSVterm))
+			curSentenceType = GPS_SENTENCE_GPGSV;
+		else
+			curSentenceType = GPS_SENTENCE_OTHER;
 
 #ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
-    // Any custom candidates of this sentence type?
-    for (customCandidates = customElts; customCandidates != NULL && strcmp(customCandidates->sentenceName, term) < 0; customCandidates = customCandidates->next);
-    if (customCandidates != NULL && strcmp(customCandidates->sentenceName, term) > 0)
-       customCandidates = NULL;
+		// Any custom candidates of this sentence type?
+		for (customCandidates = customElts; customCandidates != NULL && strcmp(customCandidates->sentenceName, term) < 0;
+			 customCandidates = customCandidates->next)
+			;
+		if (customCandidates != NULL && strcmp(customCandidates->sentenceName, term) > 0) customCandidates = NULL;
 #endif
-    // Serial.printf("%s ENC:%i PAS:%i FAI:%i FIX:%i\n", term, encodedCharCount, passedChecksumCount, failedChecksumCount, sentencesWithFixCount);
-    return false;
-  }
+		// Serial.printf("%s ENC:%i PAS:%i FAI:%i FIX:%i\n", term, encodedCharCount, passedChecksumCount, failedChecksumCount,
+		// sentencesWithFixCount);
+		return false;
+	}
 
-  //see GPGSV described here http://aprs.gids.nl/nmea/#gsa
-  if(curSentenceType == GPS_SENTENCE_GPGSV) {
-    switch(curTermNumber)
-    {
-      case 2:
-      {
-        // MsgId *should* be 1 based, but some devices (Air530) send 0 when they are still starting up
-        int msgId = atoi(term) - 1;  
-        if(msgId < 0 || msgId >= TINYGPS_MAX_SATS / 4) {
-          trackedSatellitesIndex = -1; // Mark as an invalid message, bogus msgId
-        }
-        else {
-          if(msgId == 0) {
-            //reset trackedSatellites
-            memset(trackedSatellites, 0, TINYGPS_MAX_SATS * sizeof(TinyGPSTrackedSattelites));
-          }
-          trackedSatellitesIndex = 4* ((uint8_t) msgId); //4 tracked sats per line
-        }
-        break;
-      }
-      case 7:
-      case 11:
-      case 15:
-      case 19:
-      {
-        if(trackedSatellitesIndex >= 0) {
-          size_t satnum = trackedSatellitesIndex + (curTermNumber-4)/4;
-          if(satnum < TINYGPS_MAX_SATS)
-            trackedSatellites[satnum].strength = (uint8_t)atoi(term);
-        }
-        break;
-      }
-      case 4:
-      case 8:
-      case 12:
-      case 16: 
-      {
-        if(trackedSatellitesIndex >= 0) {
-          size_t satnum = trackedSatellitesIndex + (curTermNumber-4)/4;
-          if(satnum < TINYGPS_MAX_SATS)
-            trackedSatellites[satnum].prn = (uint8_t)atoi(term);
-        }
-        break;
-      }
-    }
-  }
-  else if (curSentenceType != GPS_SENTENCE_OTHER && term[0])
-    switch(COMBINE(curSentenceType, curTermNumber))
-  {
-    case COMBINE(GPS_SENTENCE_GPRMC, 1): // Time in both sentences
-    case COMBINE(GPS_SENTENCE_GPGGA, 1):
-      time.setTime(term);
-      break;
-    case COMBINE(GPS_SENTENCE_GPRMC, 2): // GPRMC validity
-      setSentenceHasFix(term[0] == 'A');
-      break;
-    case COMBINE(GPS_SENTENCE_GPRMC, 3): // Latitude
-    case COMBINE(GPS_SENTENCE_GPGGA, 2):
-      location.setLatitude(term);
-      break;
-    case COMBINE(GPS_SENTENCE_GPRMC, 4): // N/S
-    case COMBINE(GPS_SENTENCE_GPGGA, 3):
-      location.newval.lat.negative = term[0] == 'S';
-      break;
-    case COMBINE(GPS_SENTENCE_GPRMC, 5): // Longitude
-    case COMBINE(GPS_SENTENCE_GPGGA, 4):
-      location.setLongitude(term);
-      break;
-    case COMBINE(GPS_SENTENCE_GPRMC, 6): // E/W
-    case COMBINE(GPS_SENTENCE_GPGGA, 5):
-      location.newval.lng.negative = term[0] == 'W';
-      break;
-    case COMBINE(GPS_SENTENCE_GPRMC, 7): // Speed (GPRMC)
-      speed.set(term);
-      break;
-    case COMBINE(GPS_SENTENCE_GPRMC, 8): // Course (GPRMC)
-      course.set(term);
-      break;
-    case COMBINE(GPS_SENTENCE_GPRMC, 9): // Date (GPRMC)
-      date.setDate(term);
-      break;
-    case COMBINE(GPS_SENTENCE_GPGGA, 6): // Fix data (GPGGA)
-      setSentenceHasFix(term[0] > '0');
-      fixQ = term[0] - '0';
-      break;
-    case COMBINE(GPS_SENTENCE_GPGGA, 7): // Satellites used (GPGGA)
-      satellites.set(term);
-      break;
-    case COMBINE(GPS_SENTENCE_GPGGA, 8): // HDOP
-      hdop.set(term);
-      break;
-    case COMBINE(GPS_SENTENCE_GPGGA, 9): // Altitude (GPGGA)
-      altitude.set(term);
-      break;
-    case COMBINE(GPS_SENTENCE_GPGGA, 11): // Height over Geoid
-      geoidHeight.set(term);
-      break;
-  }
+	// see GPGSV described here http://aprs.gids.nl/nmea/#gsa
+	if (curSentenceType == GPS_SENTENCE_GPGSV) {
+		if (curTermNumber == 2) {
+			// MsgId *should* be 1 based, but some devices (Air530) send 0 when they are still starting up
+			int msgId = atoi(term) - 1;
+			if (msgId < 0 || msgId >= TINYGPS_MAX_SATS / 4) {
+				trackedSatellitesIndex = -1; // Mark as an invalid message, bogus msgId
+			} else {
+				// if (msgId == 0) {
+				//     // reset trackedSatellites
+				//     // memset(trackedSatellites, 0, TINYGPS_MAX_SATS * sizeof(TinyGPSTrackedSatellites));
+				// }
+				trackedSatellitesIndex = 4 * ((uint8_t)msgId); // 4 tracked sats per line
+			}
+		} else {
+			if (trackedSatellitesIndex >= 0) {
+				size_t satnum = trackedSatellitesIndex + (curTermNumber - 4) / 4;
+				if (satnum < TINYGPS_MAX_SATS) {
+					switch (curTermNumber) {
+					case 3:
+						satellitesTracked.set(term);
+						satellitesTracked.commit(sentenceTime);
+						break;
+
+					case 7:
+					case 11:
+					case 15:
+					case 19:
+						trackedSatellites[satnum].strength = (uint8_t)atoi(term);
+						break;
+
+					case 4:
+					case 8:
+					case 12:
+					case 16:
+						trackedSatellites[satnum].prn = (uint8_t)atoi(term);
+						break;
+
+					case 5:
+					case 9:
+					case 13:
+					case 17:
+						trackedSatellites[satnum].elevation = (uint8_t)atoi(term);
+						break;
+
+					case 6:
+					case 10:
+					case 14:
+					case 18:
+						trackedSatellites[satnum].azimuth = (uint16_t)atoi(term);
+						break;
+					}
+				}
+			}
+		}
+	} else if (curSentenceType != GPS_SENTENCE_OTHER && term[0])
+		switch (COMBINE(curSentenceType, curTermNumber)) {
+		case COMBINE(GPS_SENTENCE_GPRMC, 1): // Time in both sentences
+		case COMBINE(GPS_SENTENCE_GPGGA, 1):
+			time.setTime(term);
+			break;
+		case COMBINE(GPS_SENTENCE_GPRMC, 2): // GPRMC validity
+			setSentenceHasFix(term[0] == 'A');
+			break;
+		case COMBINE(GPS_SENTENCE_GPRMC, 3): // Latitude
+		case COMBINE(GPS_SENTENCE_GPGGA, 2):
+			location.setLatitude(term);
+			break;
+		case COMBINE(GPS_SENTENCE_GPRMC, 4): // N/S
+		case COMBINE(GPS_SENTENCE_GPGGA, 3):
+			location.newval.lat.negative = term[0] == 'S';
+			break;
+		case COMBINE(GPS_SENTENCE_GPRMC, 5): // Longitude
+		case COMBINE(GPS_SENTENCE_GPGGA, 4):
+			location.setLongitude(term);
+			break;
+		case COMBINE(GPS_SENTENCE_GPRMC, 6): // E/W
+		case COMBINE(GPS_SENTENCE_GPGGA, 5):
+			location.newval.lng.negative = term[0] == 'W';
+			break;
+		case COMBINE(GPS_SENTENCE_GPRMC, 7): // Speed (GPRMC)
+			speed.set(term);
+			break;
+		case COMBINE(GPS_SENTENCE_GPRMC, 8): // Course (GPRMC)
+			course.set(term);
+			break;
+		case COMBINE(GPS_SENTENCE_GPRMC, 9): // Date (GPRMC)
+			date.setDate(term);
+			break;
+		case COMBINE(GPS_SENTENCE_GPGGA, 6): // Fix data (GPGGA)
+			setSentenceHasFix(term[0] > '0');
+			fixQ = term[0] - '0';
+			break;
+		case COMBINE(GPS_SENTENCE_GPGGA, 7): // Satellites used (GPGGA)
+			satellites.set(term);
+			break;
+		case COMBINE(GPS_SENTENCE_GPGGA, 8): // HDOP
+			hdop.set(term);
+			break;
+		case COMBINE(GPS_SENTENCE_GPGGA, 9): // Altitude (GPGGA)
+			altitude.set(term);
+			break;
+		case COMBINE(GPS_SENTENCE_GPGGA, 11): // Height over Geoid
+			geoidHeight.set(term);
+			break;
+		}
 
 #ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
-  // Set custom values as needed
-  for (TinyGPSCustom *p = customCandidates; p != NULL && strcmp(p->sentenceName, customCandidates->sentenceName) == 0 && p->termNumber <= curTermNumber; p = p->next)
-    if (p->termNumber == curTermNumber)
-         p->set(term);
+	// Set custom values as needed
+	for (TinyGPSCustom *p = customCandidates;
+		 p != NULL && strcmp(p->sentenceName, customCandidates->sentenceName) == 0 && p->termNumber <= curTermNumber;
+		 p = p->next)
+		if (p->termNumber == curTermNumber) p->set(term);
 #endif
 
-  return false;
+	return false;
 }
 
 /* static */
-double TinyGPSPlus::distanceBetween(double lat1, double long1, double lat2, double long2)
-{
-  // returns distance in meters between two positions, both specified
-  // as signed decimal-degrees latitude and longitude. Uses great-circle
-  // distance computation for hypothetical sphere of radius 6372795 meters.
-  // Because Earth is no exact sphere, rounding errors may be up to 0.5%.
-  // Courtesy of Maarten Lamers
-  double delta = radians(long1-long2);
-  double sdlong = sin(delta);
-  double cdlong = cos(delta);
-  lat1 = radians(lat1);
-  lat2 = radians(lat2);
-  double slat1 = sin(lat1);
-  double clat1 = cos(lat1);
-  double slat2 = sin(lat2);
-  double clat2 = cos(lat2);
-  delta = (clat1 * slat2) - (slat1 * clat2 * cdlong);
-  delta = sq(delta);
-  delta += sq(clat2 * sdlong);
-  delta = sqrt(delta);
-  double denom = (slat1 * slat2) + (clat1 * clat2 * cdlong);
-  delta = atan2(delta, denom);
-  return delta * 6372795;
+double TinyGPSPlus::distanceBetween(double lat1, double long1, double lat2, double long2) {
+	// returns distance in meters between two positions, both specified
+	// as signed decimal-degrees latitude and longitude. Uses great-circle
+	// distance computation for hypothetical sphere of radius 6372795 meters.
+	// Because Earth is no exact sphere, rounding errors may be up to 0.5%.
+	// Courtesy of Maarten Lamers
+	double delta = radians(long1 - long2);
+	double sdlong = sin(delta);
+	double cdlong = cos(delta);
+	lat1 = radians(lat1);
+	lat2 = radians(lat2);
+	double slat1 = sin(lat1);
+	double clat1 = cos(lat1);
+	double slat2 = sin(lat2);
+	double clat2 = cos(lat2);
+	delta = (clat1 * slat2) - (slat1 * clat2 * cdlong);
+	delta = sq(delta);
+	delta += sq(clat2 * sdlong);
+	delta = sqrt(delta);
+	double denom = (slat1 * slat2) + (clat1 * clat2 * cdlong);
+	delta = atan2(delta, denom);
+	return delta * 6372795;
 }
 
-double TinyGPSPlus::courseTo(double lat1, double long1, double lat2, double long2)
-{
-  // returns course in degrees (North=0, West=270) from position 1 to position 2,
-  // both specified as signed decimal-degrees latitude and longitude.
-  // Because Earth is no exact sphere, calculated course may be off by a tiny fraction.
-  // Courtesy of Maarten Lamers
-  double dlon = radians(long2-long1);
-  lat1 = radians(lat1);
-  lat2 = radians(lat2);
-  double a1 = sin(dlon) * cos(lat2);
-  double a2 = sin(lat1) * cos(lat2) * cos(dlon);
-  a2 = cos(lat1) * sin(lat2) - a2;
-  a2 = atan2(a1, a2);
-  if (a2 < 0.0)
-  {
-    a2 += TWO_PI;
-  }
-  return degrees(a2);
+double TinyGPSPlus::courseTo(double lat1, double long1, double lat2, double long2) {
+	// returns course in degrees (North=0, West=270) from position 1 to position 2,
+	// both specified as signed decimal-degrees latitude and longitude.
+	// Because Earth is no exact sphere, calculated course may be off by a tiny fraction.
+	// Courtesy of Maarten Lamers
+	double dlon = radians(long2 - long1);
+	lat1 = radians(lat1);
+	lat2 = radians(lat2);
+	double a1 = sin(dlon) * cos(lat2);
+	double a2 = sin(lat1) * cos(lat2) * cos(dlon);
+	a2 = cos(lat1) * sin(lat2) - a2;
+	a2 = atan2(a1, a2);
+	if (a2 < 0.0) {
+		a2 += TWO_PI;
+	}
+	return degrees(a2);
 }
 
-const char *TinyGPSPlus::cardinal(double course)
-{
-  static const char* directions[] = {"N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"};
-  int direction = (int)((course + 11.25f) / 22.5f);
-  return directions[direction % 16];
+const char *TinyGPSPlus::cardinal(double course) {
+	static const char *directions[] = {"N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+									   "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"};
+	int direction = (int)((course + 11.25f) / 22.5f);
+	return directions[direction % 16];
 }
 
-void TinyGPSLocation::commit(uint32_t timestamp)
-{
-   createTime = timestamp;
-   val.lat = newval.lat;
-   val.lng = newval.lng;
-   flags |= (FLAG_VALID|FLAG_UPDATED);
+void TinyGPSLocation::commit(uint32_t timestamp) {
+	createTime = timestamp;
+	val.lat = newval.lat;
+	val.lng = newval.lng;
+	flags |= (FLAG_VALID | FLAG_UPDATED);
 }
 
-void TinyGPSLocation::setLatitude(const char *term)
-{
-   TinyGPSPlus::parseDegrees(term, newval.lat);
+void TinyGPSLocation::setLatitude(const char *term) { TinyGPSPlus::parseDegrees(term, newval.lat); }
+
+void TinyGPSLocation::setLongitude(const char *term) { TinyGPSPlus::parseDegrees(term, newval.lng); }
+
+double TinyGPSLocation::lat() {
+	flags &= (~FLAG_UPDATED);
+	double ret = (double)val.lat.deg + ((double)val.lat.billionths / (double)1000000000.0);
+	return val.lat.negative ? -ret : ret;
 }
 
-void TinyGPSLocation::setLongitude(const char *term)
-{
-   TinyGPSPlus::parseDegrees(term, newval.lng);
+double TinyGPSLocation::lng() {
+	flags &= (~FLAG_UPDATED);
+	double ret = (double)val.lng.deg + ((double)val.lng.billionths / (double)1000000000.0);
+	return val.lng.negative ? -ret : ret;
 }
 
-double TinyGPSLocation::lat()
-{
-   flags &= (~FLAG_UPDATED);
-   double ret = (double)val.lat.deg + ((double)val.lat.billionths / (double)1000000000.0);
-   return val.lat.negative ? -ret : ret;
+void TinyGPSDate::commit(uint32_t timestamp) {
+	createTime = timestamp;
+	val = newval;
+	flags |= (FLAG_VALID | FLAG_UPDATED);
 }
 
-double TinyGPSLocation::lng()
-{
-   flags &= (~FLAG_UPDATED);
-   double ret = (double)val.lng.deg + ((double)val.lng.billionths / (double)1000000000.0);
-   return val.lng.negative ? -ret : ret;
+void TinyGPSTime::commit(uint32_t timestamp) {
+	createTime = timestamp;
+	val = newval;
+	flags |= (FLAG_VALID | FLAG_UPDATED);
 }
 
-void TinyGPSDate::commit(uint32_t timestamp)
-{
-   createTime = timestamp;
-   val = newval;
-   flags |= (FLAG_VALID|FLAG_UPDATED);
+void TinyGPSTime::setTime(const char *term) { newval = (uint32_t)TinyGPSPlus::parseDecimal(term); }
+
+void TinyGPSDate::setDate(const char *term) { newval = atol(term); }
+
+uint16_t TinyGPSDate::year() {
+	flags &= (~FLAG_UPDATED);
+	uint16_t year = val % 100;
+	return year + 2000;
 }
 
-void TinyGPSTime::commit(uint32_t timestamp)
-{
-   createTime = timestamp;
-   val = newval;
-   flags |= (FLAG_VALID|FLAG_UPDATED);
+uint8_t TinyGPSDate::month() {
+	flags &= (~FLAG_UPDATED);
+	return (val / 100) % 100;
 }
 
-void TinyGPSTime::setTime(const char *term)
-{
-   newval = (uint32_t)TinyGPSPlus::parseDecimal(term);
+uint8_t TinyGPSDate::day() {
+	flags &= (~FLAG_UPDATED);
+	return val / 10000;
 }
 
-void TinyGPSDate::setDate(const char *term)
-{
-   newval = atol(term);
+uint8_t TinyGPSTime::hour() {
+	flags &= (~FLAG_UPDATED);
+	return val / 1000000;
 }
 
-uint16_t TinyGPSDate::year()
-{
-   flags &= (~FLAG_UPDATED);
-   uint16_t year = val % 100;
-   return year + 2000;
+uint8_t TinyGPSTime::minute() {
+	flags &= (~FLAG_UPDATED);
+	return (val / 10000) % 100;
 }
 
-uint8_t TinyGPSDate::month()
-{
-   flags &= (~FLAG_UPDATED);
-   return (val / 100) % 100;
+uint8_t TinyGPSTime::second() {
+	flags &= (~FLAG_UPDATED);
+	return (val / 100) % 100;
 }
 
-uint8_t TinyGPSDate::day()
-{
-   flags &= (~FLAG_UPDATED);
-   return val / 10000;
+uint8_t TinyGPSTime::centisecond() {
+	flags &= (~FLAG_UPDATED);
+	return val % 100;
 }
 
-uint8_t TinyGPSTime::hour()
-{
-   flags &= (~FLAG_UPDATED);
-   return val / 1000000;
+void TinyGPSDecimal::commit(uint32_t timestamp) {
+	createTime = timestamp;
+	val = newval;
+	flags |= (FLAG_VALID | FLAG_UPDATED);
 }
 
-uint8_t TinyGPSTime::minute()
-{
-   flags &= (~FLAG_UPDATED);
-   return (val / 10000) % 100;
+void TinyGPSDecimal::set(const char *term) { newval = TinyGPSPlus::parseDecimal(term); }
+
+void TinyGPSInteger::commit(uint32_t timestamp) {
+	createTime = timestamp;
+	val = newval;
+	flags |= (FLAG_VALID | FLAG_UPDATED);
 }
 
-uint8_t TinyGPSTime::second()
-{
-   flags &= (~FLAG_UPDATED);
-   return (val / 100) % 100;
-}
-
-uint8_t TinyGPSTime::centisecond()
-{
-   flags &= (~FLAG_UPDATED);
-   return val % 100;
-}
-
-void TinyGPSDecimal::commit(uint32_t timestamp)
-{
-   createTime = timestamp;
-   val = newval;
-   flags |= (FLAG_VALID|FLAG_UPDATED);
-}
-
-void TinyGPSDecimal::set(const char *term)
-{
-   newval = TinyGPSPlus::parseDecimal(term);
-}
-
-void TinyGPSInteger::commit(uint32_t timestamp)
-{
-   createTime = timestamp;
-   val = newval;
-   flags |= (FLAG_VALID|FLAG_UPDATED);
-}
-
-void TinyGPSInteger::set(const char *term)
-{
-   newval = atol(term);
-}
+void TinyGPSInteger::set(const char *term) { newval = atol(term); }
 
 #ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
-TinyGPSCustom::TinyGPSCustom(TinyGPSPlus &gps, const char *_sentenceName, int _termNumber)
-{
-   begin(gps, _sentenceName, _termNumber);
+TinyGPSCustom::TinyGPSCustom(TinyGPSPlus &gps, const char *_sentenceName, int _termNumber) {
+	begin(gps, _sentenceName, _termNumber);
 }
 
-void TinyGPSCustom::begin(TinyGPSPlus &gps, const char *_sentenceName, int _termNumber)
-{
-   createTime = millis();
-   flags &= (~(FLAG_UPDATED|FLAG_VALID));
-   sentenceName = _sentenceName;
-   termNumber = _termNumber;
-   memset(stagingBuffer, '\0', sizeof(stagingBuffer));
-   memset(buffer, '\0', sizeof(buffer));
+void TinyGPSCustom::begin(TinyGPSPlus &gps, const char *_sentenceName, int _termNumber) {
+	createTime = millis();
+	flags &= (~(FLAG_UPDATED | FLAG_VALID));
+	sentenceName = _sentenceName;
+	termNumber = _termNumber;
+	memset(stagingBuffer, '\0', sizeof(stagingBuffer));
+	memset(buffer, '\0', sizeof(buffer));
 
-   // Insert this item into the GPS tree
-   gps.insertCustom(this, _sentenceName, _termNumber);
+	// Insert this item into the GPS tree
+	gps.insertCustom(this, _sentenceName, _termNumber);
 }
 
-void TinyGPSCustom::commit(uint32_t timestamp)
-{
-   createTime = timestamp;
-   strcpy(this->buffer, this->stagingBuffer);
-   flags |= (FLAG_VALID|FLAG_UPDATED);
+void TinyGPSCustom::commit(uint32_t timestamp) {
+	createTime = timestamp;
+	strcpy(this->buffer, this->stagingBuffer);
+	flags |= (FLAG_VALID | FLAG_UPDATED);
 }
 
-void TinyGPSCustom::set(const char *term)
-{
-   strncpy(this->stagingBuffer, term, sizeof(this->stagingBuffer) - 1);
-}
+void TinyGPSCustom::set(const char *term) { strncpy(this->stagingBuffer, term, sizeof(this->stagingBuffer) - 1); }
 
-void TinyGPSPlus::insertCustom(TinyGPSCustom *pElt, const char *sentenceName, int termNumber)
-{
-   TinyGPSCustom **ppelt;
+void TinyGPSPlus::insertCustom(TinyGPSCustom *pElt, const char *sentenceName, int termNumber) {
+	TinyGPSCustom **ppelt;
 
-   for (ppelt = &this->customElts; *ppelt != NULL; ppelt = &(*ppelt)->next)
-   {
-      int cmp = strcmp(sentenceName, (*ppelt)->sentenceName);
-      if (cmp < 0 || (cmp == 0 && termNumber < (*ppelt)->termNumber))
-         break;
-   }
+	for (ppelt = &this->customElts; *ppelt != NULL; ppelt = &(*ppelt)->next) {
+		int cmp = strcmp(sentenceName, (*ppelt)->sentenceName);
+		if (cmp < 0 || (cmp == 0 && termNumber < (*ppelt)->termNumber)) break;
+	}
 
-   pElt->next = *ppelt;
-   *ppelt = pElt;
+	pElt->next = *ppelt;
+	*ppelt = pElt;
 }
 #endif
